@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+# Spark needs Java at runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends default-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir pyspark==4.2.0 delta-spark==4.4.0 python-dotenv
+
+COPY src/ src/
+
+# Delta + Kafka connector jars are resolved at runtime via spark.jars.packages
+# (downloaded from Maven on first start, then cached in the container).
+# Override the job via `command:` in docker-compose.yml.
+CMD ["python", "src/jobs/bronze_stream.py"]

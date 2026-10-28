@@ -1,0 +1,120 @@
+# Kafka for streaming-lakehouse-capstone
+# Run from: Project/streaming-lakehouse-capstone/docker/
+#
+#   docker compose up -d                      # dev mode: Kafka only
+#   docker compose --profile full up -d       # full stack: Kafka + producer + Spark jobs
+#   docker compose --profile flink up -d      # Flink (run ./flink-setup.sh first)
+
+services:
+  kafka:
+    image: bitnamilegacy/kafka:latest
+    container_name: capstone-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft mode (no Zookeeper needed)
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Auto-create topics when producer first writes
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/bitnami/kafka
+
+  # ---------------------------------------------------------- full profile
+  producer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.producer
+    container_name: capstone-producer
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: crypto.trades
+    depends_on:
+      - kafka
+    restart: unless-stopped
+    profiles: ["full"]
+
+  spark-bronze:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.spark
+    container_name: capstone-spark-bronze
+    command: python src/jobs/bronze_stream.py
+    environment:
+      LAKE_BASE_PATH: /data/lake
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: crypto.trades
+      KAFKA_STARTING_OFFSETS: latest
+    volumes:
+      - ../data/lake:/data/lake
+    depends_on:
+      - kafka
+    restart: unless-stopped
+    profiles: ["full"]
+
+  spark-silver:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.spark
+    container_name: capstone-spark-silver
+    command: python src/jobs/silver_job.py
+    environment:
+      LAKE_BASE_PATH: /data/lake
+    volumes:
+      - ../data/lake:/data/lake
+    depends_on:
+      - kafka
+    restart: unless-stopped
+    profiles: ["full"]
+
+  # One-shot: recomputes gold candles once per `full-up` (idempotent MERGE).
+  spark-gold:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.spark
+    container_name: capstone-spark-gold
+    command: python src/jobs/gold_ohlc.py
+    environment:
+      LAKE_BASE_PATH: /data/lake
+    volumes:
+      - ../data/lake:/data/lake
+    restart: "no"
+    profiles: ["full"]
+
+  # ---------------------------------------------------------- flink profile
+  # Run docker/flink-setup.sh first (downloads the Kafka SQL connector jar).
+  flink-jobmanager:
+    image: flink:1.20
+    container_name: capstone-flink-jobmanager
+    command: sh -c "cp /extra/*.jar /opt/flink/lib/ 2>/dev/null || true; jobmanager"
+    environment:
+      - FLINK_PROPERTIES=jobmanager.rpc.address: flink-jobmanager
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./flink-lib:/extra
+      - ../src/flink:/sql
+    profiles: ["flink"]
+
+  flink-taskmanager:
+    image: flink:1.20
+    container_name: capstone-flink-taskmanager
+    command: sh -c "cp /extra/*.jar /opt/flink/lib/ 2>/dev/null || true; taskmanager"
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+    volumes:
+      - ./flink-lib:/extra
+      - ../src/flink:/sql
+    depends_on:
+      - flink-jobmanager
+    profiles: ["flink"]
+
+volumes:
+  kafka_data:

@@ -1,0 +1,35 @@
+# Secrets
+.env
+
+# Personal learning plan — keep local, README.md is the public face
+PROJECT_PLAN.md
+
+# Delta Lake data files
+data/
+
+# Python virtual env
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Spark/Delta temp files
+_delta_log/
+_checkpoint/
+
+# Flink connector jars (downloaded by docker/flink-setup.sh)
+docker/flink-lib/
+
+# macOS
+.DS_Store
+
+# pytest
+.pytest_cache/
+
+# Spark local catalogs
+metastore_db/
+spark-warehouse/
